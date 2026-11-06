@@ -75,8 +75,8 @@ sequenceDiagram
     A->>UI: Choose Deactivate (UC steps 1-3)
     UI-->>A: Show retained-work/access warning (step 4)
     A->>UI: Confirm (step 5)
-    UI->>C: POST /students/{studentId}/deactivate
-    C->>Z: Check course ownership or section assignment
+    UI->>C: POST /api/v1/students/{studentId}/deactivate
+    C->>Z: Check active actor, course ownership, or section assignment
     Z-->>C: Permit
     C->>S: deactivateStudent(studentId)
     S->>R: Load active student in permitted scope
@@ -123,17 +123,20 @@ stateDiagram-v2
 
 | Endpoint or job | Caller (who may) | Request | Success | Errors, by extension |
 |---|---|---|---|---|
-| `POST /students/{studentId}/deactivate` | Course admin owning the student's course; instructor assigned to the student's course section | Path student id; no mutable profile fields | Standard `Result` containing the deactivated student representation | `403` for an unauthorized role or scope; not-found response for an unknown/out-of-scope student; conflict/invalid-state response when already deactivated |
+| `POST /api/v1/students/{studentId}/deactivate` | Active course admin owning the course containing the student's course section; active instructor assigned to the student's course section | Path student id; no mutable profile fields | Standard `Result` containing the `StudentDto` with `enabled=false` | `403` for an unauthenticated/unauthorized role, unknown target, or out-of-scope target (fail closed without an existence oracle); invalid-state response when already deactivated |
 | Existing protected-resource request | Authenticated caller with an existing JWT | Existing bearer token | Normal protected-resource response only for an active account | Authentication/access denial when the token names a deactivated account |
 
 ## Key decisions
 
 - **Dedicated lifecycle command.** Use a deactivation endpoint and service method instead of accepting `enabled=false` through generic profile editing. The generic update path was rejected because it combines unrelated profile mutation with a security-sensitive lifecycle transition and cannot express the confirmation or already-deactivated error cleanly.
 - **Exact scoped authorization.** Permit a course admin only within an owned course and an instructor only within the student's course section. Role-only or self-only authorization was rejected because it does not enforce `BR-student-lifecycle` and `FR-SEC-authorization`.
+- **Active actor and command-time scope.** The lifecycle command checks the caller's active account and resolves the target scope again on the server after confirmation. Trusting the previously displayed student or permitting a disabled actor was rejected because protected-resource authorization is server-side and must fail closed.
+- **Fail-closed target errors.** Unknown and out-of-scope student ids are denied without revealing whether a row exists. A `404` existence oracle was rejected in favor of the architecture's authorization-manager behavior.
 - **Immediate account enforcement.** Check persisted account state on protected requests, not only at the next login. A login-only check was rejected because `FR-SEC-active-account` explicitly covers otherwise-valid credentials and already-issued JWTs.
 - **Logical retention.** Preserve the `Student` row, course-section/team associations, weekly activity reports, and peer evaluations. Physical deletion or team removal was rejected because deactivation is recoverable and historical reporting must continue to show retained work.
 - **Active-submission invariant.** `ActivityService.saveActivity` rejects a disabled submitter, and `EvaluationService.addPeerEvaluation` rejects a disabled evaluator or evaluatee. Relying only on the browser or JWT guard was rejected because service-level invariants also protect scheduled, direct, and future API paths.
 - **Historical-report invariant.** `EvaluationService.generateWeeklyPeerEvaluationReportForSection` continues to include students with teams regardless of current `enabled` state. Filtering disabled students from reports was rejected because it would erase the historical identity of submitted evaluations.
+- **Existing-record boundary.** Deactivation blocks new student submissions and new evaluations addressed to the disabled student; it does not delete or hide historical rows from authorized instructor/course-admin reports. Existing evaluation edits remain governed by their existing submission-window and ownership rules rather than being redefined by this use case.
 - **Actor-only feedback.** The confirmation warning and success alert are shown to the actor; no deactivation email or persistent student notification is sent. A new notification flow was rejected because this use case specifies actor feedback and does not require student notification.
 
 ## Data model
@@ -146,7 +149,7 @@ There is no data-model delta or migration. The existing `Student.enabled` field 
 - **Active account:** reuse the persisted `enabled` flag and JWT identity, adding request-time account-state enforcement so existing tokens lose access.
 - **Reminders:** reuse `SubmissionStatusService.findOwedItems`; inactive students remain excluded from both reminder recipients and active teammate evaluation sets.
 - **Submission rules:** add active-account checks to `ActivityService.saveActivity` and `EvaluationService.addPeerEvaluation`.
-- **Historical data:** reuse existing activity/evaluation repositories and report aggregation without an enabled-state filter.
+- **Historical data:** reuse existing activity/evaluation repositories and report aggregation without an enabled-state filter for authorized instructor/course-admin reports.
 - **Notification policy:** no email or persistent student notification is added.
 
 ## Tests
@@ -160,7 +163,7 @@ There is no data-model delta or migration. The existing `Student.enabled` field 
 | Already deactivated | Service + integration | Operation is rejected with an explanatory error and state remains unchanged |
 | No future submission reminders | Notification service + integration | Disabled student is absent from scheduled and on-demand owed-submission results for both weekly items |
 | No future teammate rating request | Notification/evaluation integration | Active teammates are not required or prompted to evaluate the disabled student |
-| Historical reports and evaluations remain visible | Evaluation service + integration | Section report and student historical report include the retained student and persisted evaluations for prior weeks |
+| Historical reports and evaluations remain visible | Evaluation service + integration | Authorized instructor/course-admin section and student reports include the retained student and persisted evaluations for prior weeks |
 | Disabled student cannot add new peer evaluations | Evaluation service + integration | New evaluation is rejected when the disabled student is evaluator or evaluatee |
 | Disabled student cannot submit weekly activity report | Activity service + integration | New activity report is rejected for a disabled caller |
 | Existing JWT access | Security integration | A token issued before deactivation cannot access protected resources afterward |
@@ -169,5 +172,7 @@ There is no data-model delta or migration. The existing `Student.enabled` field 
 ## Open questions / risks
 
 - The current stateless JWT resource-server path derives authorities from token claims; the request-time active-account guard must run after token authentication and before protected application work.
+- The active-account guard must not bypass the deactivation command for a disabled student; only an already-authorized active course admin or assigned instructor may invoke it.
 - Existing generic student update and route authorization paths predate this lifecycle use case. They must not remain an alternate way to change lifecycle state without the same scope and active-state invariants.
 - The current report method already uses team membership rather than `enabled` as its inclusion predicate; a regression test is required to prevent a future “active students only” optimization from removing historical rows.
+- Reminder recipients are computed at send time; this design guarantees that no new reminder includes a disabled student after deactivation commits, not recall of an email already accepted by SMTP.
