@@ -151,7 +151,7 @@ class StudentServiceTest {
     }
 
     @Test
-    void testInstructorUpdatesStudent() {
+    void testInstructorCannotChangeStudentEnabledStatusThroughGenericUpdate() {
         // Given
         Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
@@ -174,7 +174,34 @@ class StudentServiceTest {
         assertThat(result.getLastName()).isEqualTo(update.getLastName());
         assertThat(result.getEmail()).isEqualTo(update.getEmail());
 //        assertThat(result.getRoles()).isEqualTo(update.getRoles());
-        assertThat(result.isEnabled()).isEqualTo(update.isEnabled());
+        assertThat(result.isEnabled()).isEqualTo(true);
+    }
+
+    @Test
+    void deactivateStudentDisablesActiveStudentInCallerScope() {
+        Student john = this.students.get(0);
+        given(this.userUtils.getUserId()).willReturn(20);
+        given(this.studentRepository.findByIdAndOwningCourseAdmin(1, 20)).willReturn(Optional.of(john));
+        given(this.studentRepository.save(john)).willReturn(john);
+
+        Student result = this.studentService.deactivateStudent(1);
+
+        assertThat(result.isEnabled()).isFalse();
+        verify(this.studentRepository).save(john);
+    }
+
+    @Test
+    void deactivateStudentRejectsAlreadyDeactivatedStudent() {
+        Student john = this.students.get(0);
+        john.setEnabled(false);
+        given(this.userUtils.getUserId()).willReturn(20);
+        given(this.studentRepository.findByIdAndOwningCourseAdmin(1, 20)).willReturn(Optional.of(john));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> this.studentService.deactivateStudent(1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Student is already deactivated.");
+
+        verify(this.studentRepository, never()).save(any(Student.class));
     }
 
     @Test

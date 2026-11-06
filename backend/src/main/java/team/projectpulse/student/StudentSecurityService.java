@@ -1,6 +1,8 @@
 package team.projectpulse.student;
 
 import team.projectpulse.system.UserUtils;
+import team.projectpulse.user.PeerEvaluationUser;
+import team.projectpulse.user.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -19,11 +21,13 @@ public class StudentSecurityService {
 
     private final StudentRepository studentRepository;
     private final UserUtils userUtils;
+    private final UserRepository userRepository;
 
 
-    public StudentSecurityService(StudentRepository studentRepository, UserUtils userUtils) {
+    public StudentSecurityService(StudentRepository studentRepository, UserUtils userUtils, UserRepository userRepository) {
         this.studentRepository = studentRepository;
         this.userUtils = userUtils;
+        this.userRepository = userRepository;
     }
 
     public boolean isStudentSelf(Integer studentId) {
@@ -45,6 +49,33 @@ public class StudentSecurityService {
         }
         return student.getSection().getInstructors().stream()
                 .anyMatch(instructor -> instructor.getId().equals(instructorIdFromJwt));
+    }
+
+    public boolean canDeactivateStudent(Integer studentId) {
+        Integer callerId = this.userUtils.getUserId();
+        if (callerId == null || !this.userUtils.hasRole("ROLE_instructor")) {
+            return false;
+        }
+
+        boolean callerIsActive = this.userRepository.findById(callerId)
+                .map(PeerEvaluationUser::isEnabled)
+                .orElse(false);
+        if (!callerIsActive) {
+            return false;
+        }
+
+        Student student = this.studentRepository.findById(studentId).orElse(null);
+        if (student == null || student.getSection() == null || student.getSection().getCourse() == null) {
+            return false;
+        }
+
+        Integer courseAdminId = student.getSection().getCourse().getCourseAdmin().getId();
+        if (courseAdminId.equals(callerId)) {
+            return true;
+        }
+
+        return student.getSection().getInstructors().stream()
+                .anyMatch(instructor -> instructor.getId().equals(callerId));
     }
 
 }
