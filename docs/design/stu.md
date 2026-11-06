@@ -82,7 +82,7 @@ sequenceDiagram
     C->>S: deactivateStudent(studentId)
     S->>R: Load active student in permitted scope
     R-->>S: Student
-    S->>S: Set enabled=false; retain associations and records
+    S->>S: Set enabled=false and retain associations and records
     S->>R: Save atomically
     R-->>C: Deactivated student
     C-->>UI: Success Result
