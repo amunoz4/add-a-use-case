@@ -57,7 +57,7 @@ classDiagram
 
 - **Reused:** `Student`, `StudentRepository`, DTO/converter conventions, `StudentController`, `StudentService`, `StudentSecurityService`, `Students.vue`, and the shared `Result` envelope.
 - **New or extended:** a dedicated lifecycle endpoint/service method, scoped authorization for course-admin ownership or assigned-instructor membership, a student API call and confirmation interaction, and request-time active-account enforcement for already-issued JWTs.
-- **Related existing behavior:** `SubmissionStatusService.findOwedItems` already filters inactive students from owed-submission and active-teammate sets; `EvaluationService.generateWeeklyPeerEvaluationReportForSection` must retain its current team-based inclusion so historical rows remain visible.
+- **Related existing behavior:** `SubmissionStatusService.findOwedItems` already filters inactive students from owed-submission and active-teammate sets under `BR-submission-owed`; `EvaluationService.generateWeeklyPeerEvaluationReportForSection` must retain its current team-based inclusion so historical rows remain visible under `BR-student-lifecycle`.
 
 ## Sequence
 
@@ -76,7 +76,8 @@ sequenceDiagram
     UI-->>A: Show retained-work/access warning (step 4)
     A->>UI: Confirm (step 5)
     UI->>C: POST /api/v1/students/{studentId}/deactivate
-    C->>Z: Check active actor, course ownership, or section assignment
+    C->>Z: Apply SecurityConfiguration POST students/{studentId}/deactivate rule
+    Z->>Z: Check active actor, course ownership, or section assignment
     Z-->>C: Permit
     C->>S: deactivateStudent(studentId)
     S->>R: Load active student in permitted scope
@@ -130,13 +131,14 @@ stateDiagram-v2
 
 - **Dedicated lifecycle command.** Use a deactivation endpoint and service method instead of accepting `enabled=false` through generic profile editing. The generic update path was rejected because it combines unrelated profile mutation with a security-sensitive lifecycle transition and cannot express the confirmation or already-deactivated error cleanly.
 - **Exact scoped authorization.** Permit a course admin only within an owned course and an instructor only within the student's course section. Role-only or self-only authorization was rejected because it does not enforce `BR-student-lifecycle` and `FR-SEC-authorization`.
+- **SecurityConfiguration route rule.** Register the command as `.requestMatchers(HttpMethod.POST, this.baseUrl + "/students/{studentId}/deactivate").access(this.studentLifecycleAuthorizationManager)` in `SecurityConfiguration`, with the manager enforcing the `BR-student-lifecycle` scope; a generic `authenticated()` or existing `userOwnershipAuthorizationManager` rule was rejected because neither expresses course ownership versus assigned-section authority.
 - **Active actor and command-time scope.** The lifecycle command checks the caller's active account and resolves the target scope again on the server after confirmation. Trusting the previously displayed student or permitting a disabled actor was rejected because protected-resource authorization is server-side and must fail closed.
 - **Fail-closed target errors.** Unknown and out-of-scope student ids are denied without revealing whether a row exists. A `404` existence oracle was rejected in favor of the architecture's authorization-manager behavior.
 - **Immediate account enforcement.** Check persisted account state on protected requests, not only at the next login. A login-only check was rejected because `FR-SEC-active-account` explicitly covers otherwise-valid credentials and already-issued JWTs.
 - **Logical retention.** Preserve the `Student` row, course-section/team associations, weekly activity reports, and peer evaluations. Physical deletion or team removal was rejected because deactivation is recoverable and historical reporting must continue to show retained work.
-- **Active-submission invariant.** `ActivityService.saveActivity` rejects a disabled submitter, and `EvaluationService.addPeerEvaluation` rejects a disabled evaluator or evaluatee. Relying only on the browser or JWT guard was rejected because service-level invariants also protect scheduled, direct, and future API paths.
-- **Historical-report invariant.** `EvaluationService.generateWeeklyPeerEvaluationReportForSection` continues to include students with teams regardless of current `enabled` state. Filtering disabled students from reports was rejected because it would erase the historical identity of submitted evaluations.
-- **Existing-record boundary.** Deactivation blocks new student submissions and new evaluations addressed to the disabled student; it does not delete or hide historical rows from authorized instructor/course-admin reports. Existing evaluation edits remain governed by their existing submission-window and ownership rules rather than being redefined by this use case.
+- **Active-submission invariant.** `ActivityService.saveActivity` rejects a disabled submitter, and `EvaluationService.addPeerEvaluation` rejects a disabled evaluator or evaluatee, as required by `BR-student-lifecycle` and `BR-team-assignment-required`. Relying only on the browser or JWT guard was rejected because service-level invariants also protect scheduled, direct, and future API paths.
+- **Historical-report invariant.** `EvaluationService.generateWeeklyPeerEvaluationReportForSection` continues to include students with teams regardless of current `enabled` state, and authorized historical activity/evaluation queries retain persisted rows, as required by `BR-student-lifecycle`. Filtering disabled students from reports was rejected because it would erase the historical identity of submitted evaluations.
+- **Existing-record boundary.** Deactivation blocks new student submissions and new evaluations addressed to the disabled student, while `SubmissionStatusService.findOwedItems` excludes the disabled student from future owed work and teammate requirements. It does not delete or hide historical rows from authorized instructor/course-admin reports. Existing evaluation edits remain governed by their existing submission-window and ownership rules rather than being redefined by this use case.
 - **Actor-only feedback.** The confirmation warning and success alert are shown to the actor; no deactivation email or persistent student notification is sent. A new notification flow was rejected because this use case specifies actor feedback and does not require student notification.
 
 ## Data model
@@ -154,20 +156,20 @@ There is no data-model delta or migration. The existing `Student.enabled` field 
 
 ## Tests
 
-| Use case, flow | Level (unit / integration) | Asserts |
+| Use case, flow | Level (unit / integration) | Concrete test target and assertion |
 |---|---|---|
-| Main success | Service unit + integration | Authorized actor deactivates an active student; `enabled=false`; section/team associations and historical activity/evaluation rows remain |
-| Course-admin scope | Integration | Owning course admin succeeds; unrelated course admin is denied |
-| Assigned-instructor scope | Integration | Instructor assigned to the student's course section succeeds; instructor assigned elsewhere is denied |
-| Cancellation before confirmation | Frontend component/UI | Dismissal makes no API call, changes no state, and shows no success alert |
-| Already deactivated | Service + integration | Operation is rejected with an explanatory error and state remains unchanged |
-| No future submission reminders | Notification service + integration | Disabled student is absent from scheduled and on-demand owed-submission results for both weekly items |
-| No future teammate rating request | Notification/evaluation integration | Active teammates are not required or prompted to evaluate the disabled student |
-| Historical reports and evaluations remain visible | Evaluation service + integration | Authorized instructor/course-admin section and student reports include the retained student and persisted evaluations for prior weeks |
-| Disabled student cannot add new peer evaluations | Evaluation service + integration | New evaluation is rejected when the disabled student is evaluator or evaluatee |
-| Disabled student cannot submit weekly activity report | Activity service + integration | New activity report is rejected for a disabled caller |
-| Existing JWT access | Security integration | A token issued before deactivation cannot access protected resources afterward |
-| New login | Authentication integration | A disabled student cannot authenticate |
+| Main success | `StudentServiceTest.deactivateStudentDisablesActiveStudent` and `StudentIntegrationTest.courseAdminDeactivatesStudent` | Authorized actor deactivates an active student; `enabled=false`; section/team associations and historical activity/evaluation rows remain |
+| Course-admin scope | `StudentIntegrationTest.courseAdminDeactivatesStudent` and `StudentIntegrationTest.unrelatedCourseAdminCannotDeactivateStudent` | Owning course admin succeeds; unrelated course admin is denied |
+| Assigned-instructor scope | `StudentIntegrationTest.assignedInstructorDeactivatesStudent` and `StudentIntegrationTest.unassignedInstructorCannotDeactivateStudent` | Instructor assigned to the student's course section succeeds; instructor assigned elsewhere is denied |
+| Cancellation before confirmation | `frontend/src/views/instructor/__tests__/Students.spec.ts::cancelsDeactivationWithoutCallingApi` | Dismissal makes no API call, changes no state, and shows no success alert |
+| Already deactivated | `StudentServiceTest.deactivateStudentRejectsAlreadyDeactivatedStudent` and `StudentIntegrationTest.alreadyDeactivatedStudentIsRejected` | Operation is rejected with an explanatory error and state remains unchanged |
+| No future submission reminders | `SubmissionStatusServiceTest.findOwedItemsExcludesDisabledStudent` and `SubmissionStatusServiceIntegrationTest.disabledStudentIsAbsentFromOwedItems` | Disabled student is absent from scheduled and on-demand owed-submission results for both weekly items |
+| No future teammate rating request | `SubmissionStatusServiceTest.peerEvaluationOwedExcludesDisabledTeammate` and `SubmissionStatusServiceIntegrationTest.testAnEvaluationOfADeactivatedTeammateIsNotRequired` | Active teammates are not required or prompted to evaluate the disabled student |
+| Historical reports and evaluations remain visible | `EvaluationServiceTest.testGenerateWeeklyPeerEvaluationReportIncludesDisabledStudentHistory` and `EvaluationIntegrationTest.adminCanReadDisabledStudentHistoricalEvaluations` | Authorized instructor/course-admin section reports include the retained student and persisted evaluations for prior weeks; deactivation does not erase historical rows |
+| Disabled student cannot add new peer evaluations | `EvaluationServiceTest.addPeerEvaluationRejectsDisabledEvaluator` and `EvaluationIntegrationTest.disabledStudentCannotAddPeerEvaluation` | New evaluation is rejected when the disabled student is evaluator or evaluatee |
+| Disabled student cannot submit weekly activity report | `ActivityServiceTest.testSaveActivityRejectsDisabledSubmitter` and `ActivityIntegrationTest.disabledStudentCannotAddActivity` | New activity report is rejected for a disabled caller |
+| Existing JWT access | `AuthorizationRuleIntegrationTest.disabledStudentTokenIsRejectedAfterDeactivation` | A token issued before deactivation cannot access protected resources afterward |
+| New login | `UserIntegrationTest.disabledStudentCannotLogin` | A disabled student cannot authenticate |
 
 ## Open questions / risks
 
