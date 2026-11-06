@@ -48,6 +48,15 @@
             type="primary"
             @click.stop="showEditStudentDialog(row)"
           ></el-button>
+          <el-button
+            v-if="row.enabled"
+            type="danger"
+            plain
+            size="small"
+            @click.stop="confirmDeactivation(row)"
+          >
+            Deactivate
+          </el-button>
         </template>
       </el-table-column>
       <template #empty>
@@ -78,7 +87,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { searchStudents } from '@/apis/student'
+import { deactivateStudent, searchStudents } from '@/apis/student'
 import type {
   SearchStudentByCriteriaResponse,
   Student,
@@ -86,7 +95,7 @@ import type {
 } from '@/apis/student/types'
 import { useSettingsStore } from '@/stores/settings'
 import EditStudentForm from './EditStudentForm.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const searchCriteria = ref<StudentSearchCriteria>({
   sectionId: NaN,
@@ -162,6 +171,27 @@ function showEditStudentDialog(student: Student) {
 function closeDialog() {
   dialogVisible.value = false
   loadStudents()
+}
+
+async function confirmDeactivation(student: Student) {
+  try {
+    await ElMessageBox.confirm(
+      'Deactivation preserves the student account, team associations, and submitted work, but prevents login, protected-resource access, new activity reports, and new peer evaluations.',
+      'Deactivate student',
+      {
+        confirmButtonText: 'Deactivate',
+        cancelButtonText: 'Cancel',
+        type: 'warning'
+      }
+    )
+  } catch (reason) {
+    if (reason === 'cancel' || reason === 'close') return
+    throw reason
+  }
+
+  await deactivateStudent(student.id as number)
+  ElMessage.success('Student deactivated successfully')
+  await loadStudents()
 }
 
 import { useRouter } from 'vue-router'
