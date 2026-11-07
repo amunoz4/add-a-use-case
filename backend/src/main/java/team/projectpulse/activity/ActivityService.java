@@ -87,6 +87,9 @@ public class ActivityService {
             throw new ActivityIllegalArgumentException("Only a student may submit a weekly activity report.");
         }
         Student submitter = this.userUtils.getStudent();
+        if (!submitter.isEnabled()) {
+            throw new ActivityIllegalArgumentException("Deactivated students cannot submit weekly activity reports.");
+        }
         if (submitter.getTeam() == null) {
             throw new ActivityIllegalArgumentException("You must be assigned to a team before submitting a weekly activity report.");
         }

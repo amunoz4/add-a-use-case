@@ -204,6 +204,21 @@ class ActivityServiceTest {
     }
 
     @Test
+    void testSaveActivityRejectsDisabledSubmitter() {
+        Team team = new Team("Team1", "Team 1 description", "https://www.team1.com");
+        team.setTeamId(1);
+        Student submitter = new Student("j.smith@abc.edu", "John", "Smith", "j.smith@abc.edu", "123456", false, "student");
+        submitter.setTeam(team);
+        given(this.userUtils.hasRole("ROLE_student")).willReturn(true);
+        given(this.userUtils.getStudent()).willReturn(submitter);
+
+        assertThatThrownBy(() -> this.activityService.saveActivity(new Activity()))
+                .isInstanceOf(ActivityIllegalArgumentException.class)
+                .hasMessage("Deactivated students cannot submit weekly activity reports.");
+        verify(this.activityRepository, never()).save(any(Activity.class));
+    }
+
+    @Test
     void testFindActivityById() {
         // Given
         given(this.activityRepository.findById(1)).willReturn(Optional.of(this.week31Activities.get(0)));

@@ -395,6 +395,28 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void addPeerEvaluationRejectsDisabledEvaluator() {
+        this.john.setEnabled(false);
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+
+        assertThatThrownBy(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation))
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Deactivated students cannot submit or receive peer evaluations.");
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
+    void addPeerEvaluationRejectsDisabledEvaluatee() {
+        this.eric.setEnabled(false);
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
+
+        assertThatThrownBy(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation))
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Deactivated students cannot submit or receive peer evaluations.");
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
     void testAddPeerEvaluationDuplicatedEvaluation() {
         // Given
         LocalDate fixedDate = LocalDate.of(2023, 8, 8);
