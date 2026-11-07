@@ -9,8 +9,6 @@ import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -114,15 +112,21 @@ public class StudentService {
         oldStudent.setLastName(update.getLastName());
         oldStudent.setEmail(update.getEmail());
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return this.studentRepository.save(oldStudent);
+    }
 
-        // If the user is an admin, then the user can update all the fields
-        if (authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"))) {
-            oldStudent.setEnabled(update.isEnabled());
-//            oldStudent.setRoles(update.getRoles());
+    public Student deactivateStudent(Integer studentId) {
+        Integer callerId = this.userUtils.getUserId();
+        Student student = this.studentRepository.findByIdAndOwningCourseAdmin(studentId, callerId)
+                .or(() -> this.studentRepository.findByIdAndAssignedInstructor(studentId, callerId))
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+
+        if (!student.isEnabled()) {
+            throw new IllegalArgumentException("Student is already deactivated.");
         }
 
-        return this.studentRepository.save(oldStudent);
+        student.setEnabled(false);
+        return this.studentRepository.save(student);
     }
 
     public void deleteStudent(Integer studentId) {

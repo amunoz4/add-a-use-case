@@ -270,6 +270,55 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.data").value("Access Denied"));
     }
 
+    @Test
+    void courseAdminDeactivatesStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.message").value("Deactivate student successfully"))
+                .andExpect(jsonPath("$.data.id").value(4))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    void assignedInstructorDeactivatesStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.id").value(4))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    void unrelatedCourseAdminCannotDeactivateStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminTimToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN))
+                .andExpect(jsonPath("$.message").value("No permission."))
+                .andExpect(jsonPath("$.data").value("Access Denied"));
+    }
+
+    @Test
+    void alreadyDeactivatedStudentIsRejected() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(true));
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Student is already deactivated."));
+    }
+
 //    @Test
 //    void testAdminDeletesStudent() throws Exception {
 //        this.mockMvc.perform(delete(this.baseUrl + "/students/3").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminToken))
